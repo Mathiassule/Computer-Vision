@@ -23,8 +23,10 @@ def find_tesseract_binary():
     to avoid PATH errors on both Local Windows and Cloud Linux.
     """
     # 1. Check if it's already in the PATH (Best case)
-    if shutil.which("tesseract"):
-        return "tesseract"
+    # shutil.which returns the full path if found, or None
+    path_in_env = shutil.which("tesseract")
+    if path_in_env:
+        return path_in_env
     
     # 2. Common Windows Paths
     windows_paths = [
@@ -36,7 +38,8 @@ def find_tesseract_binary():
     # 3. Common Linux/Mac Paths
     linux_paths = [
         "/usr/bin/tesseract",
-        "/usr/local/bin/tesseract"
+        "/usr/local/bin/tesseract",
+        "/opt/homebrew/bin/tesseract"
     ]
     
     # Check OS and search specific paths
@@ -58,11 +61,34 @@ if tesseract_path:
 else:
     # If we still can't find it, show a big helpful error
     st.error("🚨 Critical Error: Tesseract Engine not found!")
+    
+    # DIAGNOSTICS FOR DEBUGGING
+    with st.expander("🔍 Click for Troubleshooting Info"):
+        st.write(f"**OS detected:** {platform.system()}")
+        st.write("Checked standard paths but found nothing.")
+        
+        if platform.system() == "Linux":
+            st.warning("""
+            **Streamlit Cloud Instructions:**
+            1. Ensure you have a file named `packages.txt` in your repo root.
+            2. It must contain the line: `tesseract-ocr`.
+            3. **CRITICAL:** Go to 'Manage App' (bottom right) -> 3 dots -> **Reboot App**. 
+            (Adding the file isn't enough; the server must restart to install it).
+            """)
+            
+            # Check if /usr/bin exists to debug
+            if os.path.exists("/usr/bin"):
+                files = os.listdir("/usr/bin")
+                tess_files = [f for f in files if "tess" in f]
+                if tess_files:
+                    st.success(f"Found similar files in /usr/bin: {tess_files}")
+                    st.write("Try setting path manually in sidebar.")
+                else:
+                    st.error("No 'tesseract' files found in /usr/bin. It is NOT installed.")
+    
     if platform.system() == "Windows":
         st.warning("It looks like you are on Windows. Please install Tesseract from: https://github.com/UB-Mannheim/tesseract/wiki")
         st.info("If you installed it, paste the full path to 'tesseract.exe' in the sidebar.")
-    else:
-        st.warning("It looks like you are on Linux/Cloud. Make sure 'packages.txt' is in your repo and contains 'tesseract-ocr'.")
 
 # --- SIDEBAR: MANUAL OVERRIDE (Safety Net) ---
 # If the auto-finder fails, let the user paste the path manually
