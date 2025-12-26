@@ -17,91 +17,64 @@ st.title("📜 Smart Scanner AI")
 st.markdown("**Week 4: Optical Character Recognition & Data Mining**")
 
 # --- ROBUST TESSERACT PATH FINDER ---
-def find_tesseract_binary():
+def configure_tesseract():
     """
-    Actively searches for the Tesseract binary in common locations
-    to avoid PATH errors on both Local Windows and Cloud Linux.
+    Attempts to configure Tesseract path automatically.
+    Does NOT stop execution if not found; lets the user try anyway.
     """
-    # 1. Check if it's already in the PATH (Best case)
-    # shutil.which returns the full path if found, or None
+    # 1. Check PATH (This works if installed via apt-get on Linux)
     path_in_env = shutil.which("tesseract")
     if path_in_env:
-        return path_in_env
-    
-    # 2. Common Windows Paths
-    windows_paths = [
+        pytesseract.pytesseract.tesseract_cmd = path_in_env
+        return
+
+    # 2. Common Paths (Windows/Linux)
+    possible_paths = [
         r"C:\Program Files\Tesseract-OCR\tesseract.exe",
         r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
-        os.path.expanduser(r"~\AppData\Local\Tesseract-OCR\tesseract.exe")
-    ]
-    
-    # 3. Common Linux/Mac Paths
-    linux_paths = [
         "/usr/bin/tesseract",
-        "/usr/local/bin/tesseract",
-        "/opt/homebrew/bin/tesseract"
+        "/usr/local/bin/tesseract"
     ]
     
-    # Check OS and search specific paths
-    system = platform.system()
-    search_paths = windows_paths if system == "Windows" else linux_paths
-    
-    for path in search_paths:
+    for path in possible_paths:
         if os.path.exists(path):
-            return path
-            
-    return None
+            pytesseract.pytesseract.tesseract_cmd = path
+            return
 
-# --- SETUP TESSERACT ---
-tesseract_path = find_tesseract_binary()
+# Run configuration silently at startup
+configure_tesseract()
 
-if tesseract_path:
-    # Set the path explicitly
-    pytesseract.pytesseract.tesseract_cmd = tesseract_path
-else:
-    # If we still can't find it, show a big helpful error
-    st.error("🚨 Critical Error: Tesseract Engine not found!")
-    
-    # DIAGNOSTICS FOR DEBUGGING
-    with st.expander("🔍 Click for Troubleshooting Info"):
-        st.write(f"**OS detected:** {platform.system()}")
-        st.write("Checked standard paths but found nothing.")
-        
-        if platform.system() == "Linux":
-            st.warning("""
-            **Streamlit Cloud Instructions:**
-            1. Ensure you have a file named `packages.txt` in your repo root.
-            2. It must contain the line: `tesseract-ocr`.
-            3. **CRITICAL:** Go to 'Manage App' (bottom right) -> 3 dots -> **Reboot App**. 
-            (Adding the file isn't enough; the server must restart to install it).
-            """)
-            
-            # Check if /usr/bin exists to debug
-            if os.path.exists("/usr/bin"):
-                files = os.listdir("/usr/bin")
-                tess_files = [f for f in files if "tess" in f]
-                if tess_files:
-                    st.success(f"Found similar files in /usr/bin: {tess_files}")
-                    st.write("Try setting path manually in sidebar.")
-                else:
-                    st.error("No 'tesseract' files found in /usr/bin. It is NOT installed.")
-    
-    if platform.system() == "Windows":
-        st.warning("It looks like you are on Windows. Please install Tesseract from: https://github.com/UB-Mannheim/tesseract/wiki")
-        st.info("If you installed it, paste the full path to 'tesseract.exe' in the sidebar.")
-
-# --- SIDEBAR: MANUAL OVERRIDE (Safety Net) ---
-# If the auto-finder fails, let the user paste the path manually
-if not tesseract_path:
-    manual_path = st.sidebar.text_input("Manual Tesseract Path:", placeholder="C:\Program Files\Tesseract-OCR\tesseract.exe")
-    if manual_path:
-        pytesseract.pytesseract.tesseract_cmd = manual_path
-        st.sidebar.success("Path updated!")
-
+# --- SIDEBAR: TUNING LAB & DIAGNOSTICS ---
 st.sidebar.header("🎛️ Image Preprocessing")
+st.sidebar.caption("Fine-tune these settings to clean up shadows and grain.")
 blur_amount = st.sidebar.slider("Denoise (Blur)", 1, 15, 5, step=2)
 block_size = st.sidebar.slider("Shadow Threshold (Block)", 3, 51, 21, step=2)
 c_const = st.sidebar.slider("Contrast (C)", 1, 30, 10)
+
+# Optional Manual Path Override
+st.sidebar.divider()
+st.sidebar.markdown("### 🛠️ Troubleshooting")
+manual_path = st.sidebar.text_input("Manual Tesseract Path", placeholder="e.g. /usr/bin/tesseract")
+if manual_path:
+    pytesseract.pytesseract.tesseract_cmd = manual_path
+
+# DIAGNOSTIC BUTTON
+if st.sidebar.button("Check Installation"):
+    st.sidebar.write(f"**OS:** {platform.system()}")
+    
+    # Check if tesseract is found by shutil
+    found_path = shutil.which("tesseract")
+    if found_path:
+        st.sidebar.success(f"✅ Found at: {found_path}")
+    else:
+        st.sidebar.error("❌ 'tesseract' command NOT found.")
+        if platform.system() == "Linux":
+            st.sidebar.info("Checking /usr/bin for similar files...")
+            if os.path.exists("/usr/bin"):
+                matches = [f for f in os.listdir("/usr/bin") if "tess" in f]
+                st.sidebar.write(f"Files found: {matches}")
+                if not matches:
+                    st.sidebar.warning("No files found. 'packages.txt' likely failed.")
 
 # --- CORE FUNCTIONS ---
 
@@ -126,8 +99,16 @@ def extract_text(image_data):
     try:
         text = pytesseract.image_to_string(image_data)
         return text
+    except pytesseract.TesseractNotFoundError:
+        # Specific error for missing Tesseract
+        st.error("🚨 Tesseract Engine not found!")
+        if platform.system() == "Linux":
+            st.warning("On Streamlit Cloud? Ensure `packages.txt` contains `tesseract-ocr` and **Reboot the App**.")
+        else:
+            st.warning("On Windows? Install Tesseract from UB-Mannheim and restart.")
+        return None
     except Exception as e:
-        # Don't crash, just report
+        st.error(f"OCR Error: {e}")
         return None
 
 def parse_data(text):
@@ -159,6 +140,7 @@ def search_and_highlight(processed_img, original_img, search_term):
                     found_count += 1
         return overlay_img, found_count
     except Exception as e:
+        st.error(f"Search Error: {e}")
         return np.array(original_img), 0
 
 # --- MAIN APP UI ---
@@ -188,9 +170,7 @@ if uploaded_file:
                     st.session_state['data'] = parse_data(extracted_text)
                     st.session_state['proc_img'] = processed_image
                     st.success("Scan Complete!")
-                else:
-                    st.error("Tesseract failed to read text. Please check the 'Critical Error' at the top.")
-
+                
         if 'text' in st.session_state:
             data = st.session_state['data']
             st.divider()
