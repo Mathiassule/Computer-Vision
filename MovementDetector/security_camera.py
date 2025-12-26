@@ -84,7 +84,7 @@ if run:
 
         # 3. Delta Calculation
         delta_frame = cv2.absdiff(baseline_image, gray)
-        thresh_frame = cv2.threshold(delta_frame, 30, 255, cv2.THRESH_BINARY)[1]
+        thresh_frame = cv2.threshold(delta_frame, 60, 255, cv2.THRESH_BINARY)[1]
         thresh_frame = cv2.dilate(thresh_frame, None, iterations=2)
 
         # 4. Contour Detection
