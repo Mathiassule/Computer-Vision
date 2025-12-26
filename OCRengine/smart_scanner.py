@@ -8,7 +8,6 @@ import re
 import pandas as pd
 import os
 import platform
-import shutil
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="Smart Scanner AI", page_icon="📜", layout="wide")
@@ -16,65 +15,28 @@ st.set_page_config(page_title="Smart Scanner AI", page_icon="📜", layout="wide
 st.title("📜 Smart Scanner AI")
 st.markdown("**Week 4: Optical Character Recognition & Data Mining**")
 
-# --- ROBUST TESSERACT PATH FINDER ---
-def configure_tesseract():
-    """
-    Attempts to configure Tesseract path automatically.
-    Does NOT stop execution if not found; lets the user try anyway.
-    """
-    # 1. Check PATH (This works if installed via apt-get on Linux)
-    path_in_env = shutil.which("tesseract")
-    if path_in_env:
-        pytesseract.pytesseract.tesseract_cmd = path_in_env
-        return
-
-    # 2. Common Paths (Windows/Linux)
+# --- TESSERACT CONFIGURATION ---
+# Silent configuration to support both Local (Windows) and Cloud (Linux)
+if platform.system() == "Linux":
+    if os.path.exists("/usr/bin/tesseract"):
+        pytesseract.pytesseract.tesseract_cmd = "/usr/bin/tesseract"
+elif platform.system() == "Windows":
+    # Common default locations for Windows users
     possible_paths = [
         r"C:\Program Files\Tesseract-OCR\tesseract.exe",
-        r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
-        "/usr/bin/tesseract",
-        "/usr/local/bin/tesseract"
+        r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe"
     ]
-    
     for path in possible_paths:
         if os.path.exists(path):
             pytesseract.pytesseract.tesseract_cmd = path
-            return
+            break
 
-# Run configuration silently at startup
-configure_tesseract()
-
-# --- SIDEBAR: TUNING LAB & DIAGNOSTICS ---
+# --- SIDEBAR: TUNING LAB ---
 st.sidebar.header("🎛️ Image Preprocessing")
 st.sidebar.caption("Fine-tune these settings to clean up shadows and grain.")
 blur_amount = st.sidebar.slider("Denoise (Blur)", 1, 15, 5, step=2)
 block_size = st.sidebar.slider("Shadow Threshold (Block)", 3, 51, 21, step=2)
 c_const = st.sidebar.slider("Contrast (C)", 1, 30, 10)
-
-# Optional Manual Path Override
-st.sidebar.divider()
-st.sidebar.markdown("### 🛠️ Troubleshooting")
-manual_path = st.sidebar.text_input("Manual Tesseract Path", placeholder="e.g. /usr/bin/tesseract")
-if manual_path:
-    pytesseract.pytesseract.tesseract_cmd = manual_path
-
-# DIAGNOSTIC BUTTON
-if st.sidebar.button("Check Installation"):
-    st.sidebar.write(f"**OS:** {platform.system()}")
-    
-    # Check if tesseract is found by shutil
-    found_path = shutil.which("tesseract")
-    if found_path:
-        st.sidebar.success(f"✅ Found at: {found_path}")
-    else:
-        st.sidebar.error("❌ 'tesseract' command NOT found.")
-        if platform.system() == "Linux":
-            st.sidebar.info("Checking /usr/bin for similar files...")
-            if os.path.exists("/usr/bin"):
-                matches = [f for f in os.listdir("/usr/bin") if "tess" in f]
-                st.sidebar.write(f"Files found: {matches}")
-                if not matches:
-                    st.sidebar.warning("No files found. 'packages.txt' likely failed.")
 
 # --- CORE FUNCTIONS ---
 
@@ -85,7 +47,10 @@ def preprocess_image(image, blur_val, block_val, c_val):
     else:
         gray = img_array
 
+    # 1. Denoise
     gray = cv2.GaussianBlur(gray, (blur_val, blur_val), 0)
+    
+    # 2. Adaptive Thresholding
     processed_img = cv2.adaptiveThreshold(
         gray, 255, 
         cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
@@ -100,18 +65,14 @@ def extract_text(image_data):
         text = pytesseract.image_to_string(image_data)
         return text
     except pytesseract.TesseractNotFoundError:
-        # Specific error for missing Tesseract
-        st.error("🚨 Tesseract Engine not found!")
-        if platform.system() == "Linux":
-            st.warning("On Streamlit Cloud? Ensure `packages.txt` contains `tesseract-ocr` and **Reboot the App**.")
-        else:
-            st.warning("On Windows? Install Tesseract from UB-Mannheim and restart.")
+        st.error("🚨 Tesseract not found. If on Cloud, check packages.txt. If Local, check install.")
         return None
     except Exception as e:
         st.error(f"OCR Error: {e}")
         return None
 
 def parse_data(text):
+    # Regex patterns for mining
     email_pattern = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
     date_pattern = r'\d{1,2}[/-]\d{1,2}[/-]\d{2,4}'
     url_pattern = r'(?:https?://|www\.)[\w\.-]+\.[a-zA-Z]{2,}'
@@ -132,10 +93,13 @@ def search_and_highlight(processed_img, original_img, search_term):
         n_boxes = len(d['text'])
         
         for i in range(n_boxes):
+            # Confidence check (>40%)
             if int(d['conf'][i]) > 40:
                 word = d['text'][i]
+                # Case-insensitive search
                 if search_term.lower() in word.lower() and search_term.strip() != "":
                     (x, y, w, h) = (d['left'][i], d['top'][i], d['width'][i], d['height'][i])
+                    # Draw Red Box
                     cv2.rectangle(overlay_img, (x, y), (x + w, y + h), (255, 0, 0), 3)
                     found_count += 1
         return overlay_img, found_count
@@ -144,7 +108,7 @@ def search_and_highlight(processed_img, original_img, search_term):
         return np.array(original_img), 0
 
 # --- MAIN APP UI ---
-uploaded_file = st.file_uploader("Upload Document", type=["jpg", "png", "jpeg"])
+uploaded_file = st.file_uploader("Upload Document (Receipt, Invoice, Book Page)", type=["jpg", "png", "jpeg"])
 
 if uploaded_file:
     original_image = Image.open(uploaded_file)
@@ -208,6 +172,8 @@ if uploaded_file:
         if 'text' in st.session_state:
             st.subheader("Download Results")
             data = st.session_state['data']
+            
+            # Prepare Structured Data
             structured_items = []
             for category, items in data.items():
                 for item in items:
