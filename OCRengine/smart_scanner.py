@@ -8,6 +8,7 @@ import re
 import pandas as pd
 import os
 import platform
+import shutil
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="Smart Scanner AI", page_icon="📜", layout="wide")
@@ -15,16 +16,63 @@ st.set_page_config(page_title="Smart Scanner AI", page_icon="📜", layout="wide
 st.title("📜 Smart Scanner AI")
 st.markdown("**Week 4: Optical Character Recognition & Data Mining**")
 
-# --- TESSERACT PATH SETUP (Cloud Fix) ---
-# This block ensures the app works on Streamlit Cloud (Linux) and Local (Windows)
-if platform.system() == "Linux":
-    # Standard location on Streamlit Cloud after apt-get install
-    if os.path.exists("/usr/bin/tesseract"):
-        pytesseract.pytesseract.tesseract_cmd = "/usr/bin/tesseract"
+# --- ROBUST TESSERACT PATH FINDER ---
+def find_tesseract_binary():
+    """
+    Actively searches for the Tesseract binary in common locations
+    to avoid PATH errors on both Local Windows and Cloud Linux.
+    """
+    # 1. Check if it's already in the PATH (Best case)
+    if shutil.which("tesseract"):
+        return "tesseract"
+    
+    # 2. Common Windows Paths
+    windows_paths = [
+        r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+        r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
+        os.path.expanduser(r"~\AppData\Local\Tesseract-OCR\tesseract.exe")
+    ]
+    
+    # 3. Common Linux/Mac Paths
+    linux_paths = [
+        "/usr/bin/tesseract",
+        "/usr/local/bin/tesseract"
+    ]
+    
+    # Check OS and search specific paths
+    system = platform.system()
+    search_paths = windows_paths if system == "Windows" else linux_paths
+    
+    for path in search_paths:
+        if os.path.exists(path):
+            return path
+            
+    return None
 
-# --- SIDEBAR: TUNING LAB ---
+# --- SETUP TESSERACT ---
+tesseract_path = find_tesseract_binary()
+
+if tesseract_path:
+    # Set the path explicitly
+    pytesseract.pytesseract.tesseract_cmd = tesseract_path
+else:
+    # If we still can't find it, show a big helpful error
+    st.error("🚨 Critical Error: Tesseract Engine not found!")
+    if platform.system() == "Windows":
+        st.warning("It looks like you are on Windows. Please install Tesseract from: https://github.com/UB-Mannheim/tesseract/wiki")
+        st.info("If you installed it, paste the full path to 'tesseract.exe' in the sidebar.")
+    else:
+        st.warning("It looks like you are on Linux/Cloud. Make sure 'packages.txt' is in your repo and contains 'tesseract-ocr'.")
+
+# --- SIDEBAR: MANUAL OVERRIDE (Safety Net) ---
+# If the auto-finder fails, let the user paste the path manually
+if not tesseract_path:
+    manual_path = st.sidebar.text_input("Manual Tesseract Path:", placeholder="C:\Program Files\Tesseract-OCR\tesseract.exe")
+    if manual_path:
+        pytesseract.pytesseract.tesseract_cmd = manual_path
+        st.sidebar.success("Path updated!")
+
 st.sidebar.header("🎛️ Image Preprocessing")
-st.sidebar.caption("Fine-tune these settings to clean up shadows and grain.")
 blur_amount = st.sidebar.slider("Denoise (Blur)", 1, 15, 5, step=2)
 block_size = st.sidebar.slider("Shadow Threshold (Block)", 3, 51, 21, step=2)
 c_const = st.sidebar.slider("Contrast (C)", 1, 30, 10)
@@ -53,12 +101,10 @@ def extract_text(image_data):
         text = pytesseract.image_to_string(image_data)
         return text
     except Exception as e:
-        st.error(f"OCR Error: {e}")
-        st.info("Hint: If on Streamlit Cloud, ensure 'packages.txt' contains 'tesseract-ocr'.")
+        # Don't crash, just report
         return None
 
 def parse_data(text):
-    # Regex Patterns
     email_pattern = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
     date_pattern = r'\d{1,2}[/-]\d{1,2}[/-]\d{2,4}'
     url_pattern = r'(?:https?://|www\.)[\w\.-]+\.[a-zA-Z]{2,}'
@@ -83,23 +129,20 @@ def search_and_highlight(processed_img, original_img, search_term):
                 word = d['text'][i]
                 if search_term.lower() in word.lower() and search_term.strip() != "":
                     (x, y, w, h) = (d['left'][i], d['top'][i], d['width'][i], d['height'][i])
-                    # Draw Red Box (RGB: 255, 0, 0)
                     cv2.rectangle(overlay_img, (x, y), (x + w, y + h), (255, 0, 0), 3)
                     found_count += 1
         return overlay_img, found_count
     except Exception as e:
-        st.error(f"Search Error: {e}")
         return np.array(original_img), 0
 
 # --- MAIN APP UI ---
-uploaded_file = st.file_uploader("Upload Document (Receipt, Invoice, Book Page)", type=["jpg", "png", "jpeg"])
+uploaded_file = st.file_uploader("Upload Document", type=["jpg", "png", "jpeg"])
 
 if uploaded_file:
     original_image = Image.open(uploaded_file)
     processed_array = preprocess_image(original_image, blur_amount, block_size, c_const)
     processed_image = Image.fromarray(processed_array)
 
-    # Tabs for better organization
     tab1, tab2, tab3 = st.tabs(["🔍 Scan & Analyze", "🖍️ Visual Search", "💾 Export Data"])
 
     # --- TAB 1: SCANNING ---
@@ -111,7 +154,7 @@ if uploaded_file:
             st.image(processed_image, caption="Computer Vision View", use_container_width=True)
 
         if st.button("Start OCR Scan", type="primary"):
-            with st.spinner("Extracting Text & Mining Data..."):
+            with st.spinner("Processing..."):
                 extracted_text = extract_text(processed_image)
                 
                 if extracted_text:
@@ -120,13 +163,10 @@ if uploaded_file:
                     st.session_state['proc_img'] = processed_image
                     st.success("Scan Complete!")
                 else:
-                    st.error("No text found. Try adjusting the Tuning settings.")
+                    st.error("Tesseract failed to read text. Please check the 'Critical Error' at the top.")
 
-        # Display Results if available
         if 'text' in st.session_state:
             data = st.session_state['data']
-            
-            # Metrics
             st.divider()
             m1, m2, m3, m4 = st.columns(4)
             m1.metric("Emails", len(data["Emails"]))
@@ -134,7 +174,6 @@ if uploaded_file:
             m3.metric("Dates", len(data["Dates"]))
             m4.metric("Links", len(data["Links"]))
             
-            # Raw Text Expandable
             with st.expander("View Raw Extracted Text"):
                 st.text_area("", st.session_state['text'], height=200)
 
@@ -142,7 +181,7 @@ if uploaded_file:
     with tab2:
         if 'text' in st.session_state:
             st.subheader("Find in Page")
-            search_query = st.text_input("Enter word to find:", placeholder="e.g. Total, Date, Invoice")
+            search_query = st.text_input("Enter word to find:", placeholder="e.g. Total")
             
             if search_query:
                 highlighted_img, count = search_and_highlight(
@@ -156,16 +195,13 @@ if uploaded_file:
                 else:
                     st.warning("Word not found.")
         else:
-            st.info("Please run the scan in the first tab.")
+            st.info("Run the scan first.")
 
     # --- TAB 3: EXPORT DATA ---
     with tab3:
         if 'text' in st.session_state:
             st.subheader("Download Results")
             data = st.session_state['data']
-            
-            # 1. Prepare Structured Data (CSV)
-            # Flatten the dictionary into a list of items
             structured_items = []
             for category, items in data.items():
                 for item in items:
@@ -175,26 +211,14 @@ if uploaded_file:
             
             if not df.empty:
                 st.dataframe(df, use_container_width=True)
-                
                 csv = df.to_csv(index=False).encode('utf-8')
-                st.download_button(
-                    "📥 Download Structured Data (CSV)",
-                    csv,
-                    "scanned_data.csv",
-                    "text/csv"
-                )
+                st.download_button("📥 Download CSV", csv, "scanned_data.csv", "text/csv")
             else:
-                st.warning("No structured data (emails/phones) found to export.")
+                st.warning("No structured data found.")
             
-            # 2. Prepare Raw Text
-            st.download_button(
-                "📄 Download Full Text (.txt)",
-                st.session_state['text'],
-                "raw_scan.txt",
-                "text/plain"
-            )
+            st.download_button("📄 Download Text", st.session_state['text'], "raw_scan.txt", "text/plain")
         else:
-            st.info("Please run the scan in the first tab.")
+            st.info("Run the scan first.")
 
 else:
     st.info("Upload a document to begin.")
