@@ -5,13 +5,22 @@ from pytesseract import Output
 import cv2
 import numpy as np
 import re
-import pandas as pd # Day 5: Added for Data Export
+import pandas as pd
+import os
+import platform
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="Smart Scanner AI", page_icon="📜", layout="wide")
 
 st.title("📜 Smart Scanner AI")
 st.markdown("**Week 4: Optical Character Recognition & Data Mining**")
+
+# --- TESSERACT PATH SETUP (Cloud Fix) ---
+# This block ensures the app works on Streamlit Cloud (Linux) and Local (Windows)
+if platform.system() == "Linux":
+    # Standard location on Streamlit Cloud after apt-get install
+    if os.path.exists("/usr/bin/tesseract"):
+        pytesseract.pytesseract.tesseract_cmd = "/usr/bin/tesseract"
 
 # --- SIDEBAR: TUNING LAB ---
 st.sidebar.header("🎛️ Image Preprocessing")
@@ -45,6 +54,7 @@ def extract_text(image_data):
         return text
     except Exception as e:
         st.error(f"OCR Error: {e}")
+        st.info("Hint: If on Streamlit Cloud, ensure 'packages.txt' contains 'tesseract-ocr'.")
         return None
 
 def parse_data(text):
