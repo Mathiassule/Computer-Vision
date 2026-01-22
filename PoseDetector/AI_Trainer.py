@@ -8,7 +8,7 @@ from PIL import Image
 st.set_page_config(page_title="AI Personal Trainer", page_icon="🏋️‍♂️", layout="wide")
 
 st.title("🏋️‍♂️ AI Personal Trainer")
-st.markdown("**Week 8, Day 3: The Rep Counter**")
+st.markdown("**Week 8, Day 4: Form Correction (The Strict Trainer)**")
 
 # --- MEDIAPIPE SETUP ---
 mp_drawing = mp.solutions.drawing_utils
@@ -44,10 +44,10 @@ if mode == "Live Webcam":
     # --- VARIABLES FOR REP COUNTER ---
     counter = 0 
     stage = None # "up" or "down"
+    feedback = "Good Form" # Day 4 Variable
 
     camera = cv2.VideoCapture(0)
     
-    # Initialize Pose ONLY ONCE before the loop for performance
     with mp_pose.Pose(min_detection_confidence=detection_conf, min_tracking_confidence=tracking_conf) as pose:
         if run:
             while True:
@@ -55,14 +55,14 @@ if mode == "Live Webcam":
                 if not ret: break
                 
                 # 1. Preprocessing
-                frame = cv2.flip(frame, 1)
+                frame = cv2.flip(frame, 1) # Mirror view
                 image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 image.flags.writeable = False
                 
                 # 2. Process
                 results = pose.process(image)
                 
-                # 3. Re-color for drawing
+                # 3. Re-color
                 image.flags.writeable = True
                 image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
                 
@@ -70,8 +70,8 @@ if mode == "Live Webcam":
                 if results.pose_landmarks:
                     landmarks = results.pose_landmarks.landmark
                     
-                    # Get coordinates (Left Arm)
-                    # shoulder = 11, elbow = 13, wrist = 15
+                    # --- GET COORDINATES ---
+                    # Left Arm (For Curls)
                     shoulder = [landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER.value].x, 
                                 landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER.value].y]
                     elbow = [landmarks[mp_pose.PoseLandmark.LEFT_ELBOW.value].x, 
@@ -79,42 +79,71 @@ if mode == "Live Webcam":
                     wrist = [landmarks[mp_pose.PoseLandmark.LEFT_WRIST.value].x, 
                              landmarks[mp_pose.PoseLandmark.LEFT_WRIST.value].y]
                     
-                    # Calculate Angle
-                    angle = calculate_angle(shoulder, elbow, wrist)
+                    # Body (For Posture) - Day 4 Addition
+                    hip = [landmarks[mp_pose.PoseLandmark.LEFT_HIP.value].x, 
+                           landmarks[mp_pose.PoseLandmark.LEFT_HIP.value].y]
+                    knee = [landmarks[mp_pose.PoseLandmark.LEFT_KNEE.value].x, 
+                            landmarks[mp_pose.PoseLandmark.LEFT_KNEE.value].y]
                     
-                    # Visualize Angle
+                    # --- CALCULATE ANGLES ---
+                    elbow_angle = calculate_angle(shoulder, elbow, wrist)
+                    back_angle = calculate_angle(shoulder, hip, knee)
+                    
+                    # --- VISUALIZE ANGLES ---
                     h, w, _ = image.shape
-                    cv2.putText(image, str(int(angle)), 
+                    # Elbow Angle Text
+                    cv2.putText(image, str(int(elbow_angle)), 
                                 tuple(np.multiply(elbow, [w, h]).astype(int)), 
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2, cv2.LINE_AA)
                     
-                    # --- DAY 3 LOGIC: REP COUNTER ---
-                    if angle > 160:
-                        stage = "down"
-                    if angle < 30 and stage =='down':
-                        stage = "up"
-                        counter += 1
-                        # Optional: Print to console
-                        print(f"Rep: {counter}")
+                    # Back Angle Text (Show near hip)
+                    cv2.putText(image, str(int(back_angle)), 
+                                tuple(np.multiply(hip, [w, h]).astype(int)), 
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2, cv2.LINE_AA)
+                    
+                    # --- LOGIC LAYER ---
+                    
+                    # 1. Posture Check (Must be standing relatively straight)
+                    # We allow some lean (170-180 is perfect, < 160 is bad)
+                    if back_angle < 160:
+                        feedback = "FIX BACK!"
+                        # Draw Red Box around Feedback
+                        cv2.rectangle(image, (400, 0), (640, 73), (0, 0, 255), -1)
+                    else:
+                        feedback = "Good Form"
+                        # Draw Green Box
+                        cv2.rectangle(image, (400, 0), (640, 73), (0, 255, 0), -1)
+
+                    # 2. Rep Counter (Only counts if Form is Good)
+                    if feedback == "Good Form":
+                        if elbow_angle > 160:
+                            stage = "down"
+                        if elbow_angle < 30 and stage =='down':
+                            stage = "up"
+                            counter += 1
                         
                     # Draw Skeleton
                     mp_drawing.draw_landmarks(image, results.pose_landmarks, mp_pose.POSE_CONNECTIONS)
 
-                # 5. Dashboard UI (The Box)
-                # Draw a blue rectangle box for stats
+                # --- DASHBOARD UI ---
+                # Rep Data Box (Top Left)
                 cv2.rectangle(image, (0, 0), (225, 73), (245, 117, 16), -1)
                 
-                # Rep Data
                 cv2.putText(image, 'REPS', (15, 12), 
                             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1, cv2.LINE_AA)
                 cv2.putText(image, str(counter), (10, 60), 
                             cv2.FONT_HERSHEY_SIMPLEX, 2, (255, 255, 255), 2, cv2.LINE_AA)
                 
-                # Stage Data
                 cv2.putText(image, 'STAGE', (65, 12), 
                             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1, cv2.LINE_AA)
                 cv2.putText(image, stage if stage else "-", (60, 60), 
                             cv2.FONT_HERSHEY_SIMPLEX, 2, (255, 255, 255), 2, cv2.LINE_AA)
+                
+                # Feedback Text (Top Right - Box drawn in logic layer)
+                cv2.putText(image, 'POSTURE', (415, 12), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1, cv2.LINE_AA)
+                cv2.putText(image, feedback, (410, 60), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2, cv2.LINE_AA)
                 
                 # Display
                 FRAME_WINDOW.image(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
@@ -125,7 +154,6 @@ elif mode == "Image Upload":
     uploaded_file = st.file_uploader("Upload Fitness Photo", type=['jpg', 'png'])
     if uploaded_file:
         image = Image.open(uploaded_file)
-        # Simple processing for static image (no counting)
         with mp_pose.Pose(static_image_mode=True) as pose:
             img_array = np.array(image)
             results = pose.process(cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR))
