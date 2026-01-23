@@ -7,8 +7,8 @@ from PIL import Image
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="AI Personal Trainer", page_icon="🏋️‍♂️", layout="wide")
 
-st.title("🏋️‍♂️ AI Personal Trainer")
-st.markdown("**Week 8, Day 4: Form Correction (The Strict Trainer)**")
+st.title("🏋️‍♂️ AI Personal Trainer: The Complete Gym")
+st.markdown("**Week 8: Pose Estimation & Rep Counting**")
 
 # --- MEDIAPIPE SETUP ---
 mp_drawing = mp.solutions.drawing_utils
@@ -17,12 +17,19 @@ mp_pose = mp.solutions.pose
 # --- SIDEBAR CONFIG ---
 st.sidebar.header("⚙️ Settings")
 mode = st.sidebar.radio("Input Source", ["Live Webcam", "Image Upload"])
+exercise_choice = st.sidebar.selectbox("Select Exercise", ["Bicep Curl", "Squat", "Pushup"])
+
+st.sidebar.divider()
 smooth = st.sidebar.checkbox("Smooth Landmarks", value=True)
 detection_conf = st.sidebar.slider("Detection Confidence", 0.0, 1.0, 0.5)
 tracking_conf = st.sidebar.slider("Tracking Confidence", 0.0, 1.0, 0.5)
 
 # --- HELPER: CALCULATE ANGLE ---
 def calculate_angle(a, b, c):
+    """
+    Calculates angle between three points a, b, c.
+    b is the vertex.
+    """
     a = np.array(a) # First
     b = np.array(b) # Mid
     c = np.array(c) # End
@@ -35,16 +42,30 @@ def calculate_angle(a, b, c):
         
     return angle
 
+# --- EXERCISE LOGIC ---
+def get_coordinates(landmarks):
+    """
+    Extracts relevant joints for all exercises.
+    """
+    return {
+        'shoulder': [landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER.value].x, landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER.value].y],
+        'elbow': [landmarks[mp_pose.PoseLandmark.LEFT_ELBOW.value].x, landmarks[mp_pose.PoseLandmark.LEFT_ELBOW.value].y],
+        'wrist': [landmarks[mp_pose.PoseLandmark.LEFT_WRIST.value].x, landmarks[mp_pose.PoseLandmark.LEFT_WRIST.value].y],
+        'hip': [landmarks[mp_pose.PoseLandmark.LEFT_HIP.value].x, landmarks[mp_pose.PoseLandmark.LEFT_HIP.value].y],
+        'knee': [landmarks[mp_pose.PoseLandmark.LEFT_KNEE.value].x, landmarks[mp_pose.PoseLandmark.LEFT_KNEE.value].y],
+        'ankle': [landmarks[mp_pose.PoseLandmark.LEFT_ANKLE.value].x, landmarks[mp_pose.PoseLandmark.LEFT_ANKLE.value].y],
+    }
+
 # --- APP MODES ---
 if mode == "Live Webcam":
-    st.write("### 📹 Live Gym Feed")
+    st.write(f"### 📹 Live Feed: {exercise_choice}")
     run = st.checkbox('Start Training Session')
     FRAME_WINDOW = st.image([])
     
     # --- VARIABLES FOR REP COUNTER ---
     counter = 0 
     stage = None # "up" or "down"
-    feedback = "Good Form" # Day 4 Variable
+    feedback = "Good Form"
 
     camera = cv2.VideoCapture(0)
     
@@ -69,64 +90,75 @@ if mode == "Live Webcam":
                 # 4. Pose Logic
                 if results.pose_landmarks:
                     landmarks = results.pose_landmarks.landmark
+                    coords = get_coordinates(landmarks)
                     
-                    # --- GET COORDINATES ---
-                    # Left Arm (For Curls)
-                    shoulder = [landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER.value].x, 
-                                landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER.value].y]
-                    elbow = [landmarks[mp_pose.PoseLandmark.LEFT_ELBOW.value].x, 
-                             landmarks[mp_pose.PoseLandmark.LEFT_ELBOW.value].y]
-                    wrist = [landmarks[mp_pose.PoseLandmark.LEFT_WRIST.value].x, 
-                             landmarks[mp_pose.PoseLandmark.LEFT_WRIST.value].y]
+                    # --- EXERCISE SWITCHER ---
+                    main_angle = 0
+                    form_angle = 0
                     
-                    # Body (For Posture) - Day 4 Addition
-                    hip = [landmarks[mp_pose.PoseLandmark.LEFT_HIP.value].x, 
-                           landmarks[mp_pose.PoseLandmark.LEFT_HIP.value].y]
-                    knee = [landmarks[mp_pose.PoseLandmark.LEFT_KNEE.value].x, 
-                            landmarks[mp_pose.PoseLandmark.LEFT_KNEE.value].y]
-                    
-                    # --- CALCULATE ANGLES ---
-                    elbow_angle = calculate_angle(shoulder, elbow, wrist)
-                    back_angle = calculate_angle(shoulder, hip, knee)
-                    
-                    # --- VISUALIZE ANGLES ---
-                    h, w, _ = image.shape
-                    # Elbow Angle Text
-                    cv2.putText(image, str(int(elbow_angle)), 
-                                tuple(np.multiply(elbow, [w, h]).astype(int)), 
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2, cv2.LINE_AA)
-                    
-                    # Back Angle Text (Show near hip)
-                    cv2.putText(image, str(int(back_angle)), 
-                                tuple(np.multiply(hip, [w, h]).astype(int)), 
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2, cv2.LINE_AA)
-                    
-                    # --- LOGIC LAYER ---
-                    
-                    # 1. Posture Check (Must be standing relatively straight)
-                    # We allow some lean (170-180 is perfect, < 160 is bad)
-                    if back_angle < 160:
-                        feedback = "FIX BACK!"
-                        # Draw Red Box around Feedback
-                        cv2.rectangle(image, (400, 0), (640, 73), (0, 0, 255), -1)
-                    else:
-                        feedback = "Good Form"
-                        # Draw Green Box
-                        cv2.rectangle(image, (400, 0), (640, 73), (0, 255, 0), -1)
-
-                    # 2. Rep Counter (Only counts if Form is Good)
-                    if feedback == "Good Form":
-                        if elbow_angle > 160:
-                            stage = "down"
-                        if elbow_angle < 30 and stage =='down':
-                            stage = "up"
-                            counter += 1
+                    if exercise_choice == "Bicep Curl":
+                        # Main: Elbow Angle (Shoulder-Elbow-Wrist)
+                        main_angle = calculate_angle(coords['shoulder'], coords['elbow'], coords['wrist'])
+                        # Form: Back Posture (Shoulder-Hip-Knee)
+                        form_angle = calculate_angle(coords['shoulder'], coords['hip'], coords['knee'])
                         
+                        # Logic
+                        if form_angle < 160: feedback = "Straighten Back!"
+                        else: feedback = "Good Form"
+                        
+                        if feedback == "Good Form":
+                            if main_angle > 160: stage = "down"
+                            if main_angle < 30 and stage == 'down':
+                                stage = "up"
+                                counter += 1
+
+                    elif exercise_choice == "Squat":
+                        # Main: Knee Angle (Hip-Knee-Ankle)
+                        main_angle = calculate_angle(coords['hip'], coords['knee'], coords['ankle'])
+                        # Form: Knee alignment isn't easy in 2D, let's track depth
+                        # Optional: Back Angle (Shoulder-Hip-Knee) - ensure not leaning TOO forward
+                        form_angle = calculate_angle(coords['shoulder'], coords['hip'], coords['knee'])
+                        
+                        # Logic
+                        if form_angle < 70: feedback = "Keep Chest Up!"
+                        else: feedback = "Good Form"
+                        
+                        if feedback == "Good Form":
+                            if main_angle > 160: stage = "up"
+                            if main_angle < 90 and stage == 'up': # < 90 means deep squat
+                                stage = "down"
+                                counter += 1
+
+                    elif exercise_choice == "Pushup":
+                        # Main: Elbow Angle (Shoulder-Elbow-Wrist)
+                        main_angle = calculate_angle(coords['shoulder'], coords['elbow'], coords['wrist'])
+                        # Form: Body Alignment (Shoulder-Hip-Ankle) - Must be straight plank
+                        form_angle = calculate_angle(coords['shoulder'], coords['hip'], coords['ankle'])
+                        
+                        # Logic
+                        if form_angle < 160: feedback = "Fix Plank!"
+                        else: feedback = "Good Form"
+                        
+                        if feedback == "Good Form":
+                            if main_angle > 160: stage = "up"
+                            if main_angle < 90 and stage == 'up':
+                                stage = "down"
+                                counter += 1
+
+                    # --- VISUALIZATION ---
+                    h, w, _ = image.shape
+                    
+                    # Draw Angle Text at the Main Joint
+                    joint_pos = coords['elbow'] if exercise_choice != "Squat" else coords['knee']
+                    cv2.putText(image, str(int(main_angle)), 
+                                tuple(np.multiply(joint_pos, [w, h]).astype(int)), 
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2, cv2.LINE_AA)
+                    
                     # Draw Skeleton
                     mp_drawing.draw_landmarks(image, results.pose_landmarks, mp_pose.POSE_CONNECTIONS)
 
                 # --- DASHBOARD UI ---
-                # Rep Data Box (Top Left)
+                # Rep Data Box
                 cv2.rectangle(image, (0, 0), (225, 73), (245, 117, 16), -1)
                 
                 cv2.putText(image, 'REPS', (15, 12), 
@@ -139,8 +171,10 @@ if mode == "Live Webcam":
                 cv2.putText(image, stage if stage else "-", (60, 60), 
                             cv2.FONT_HERSHEY_SIMPLEX, 2, (255, 255, 255), 2, cv2.LINE_AA)
                 
-                # Feedback Text (Top Right - Box drawn in logic layer)
-                cv2.putText(image, 'POSTURE', (415, 12), 
+                # Feedback Box
+                color = (0, 255, 0) if feedback == "Good Form" else (0, 0, 255)
+                cv2.rectangle(image, (400, 0), (640, 73), color, -1)
+                cv2.putText(image, 'FEEDBACK', (415, 12), 
                             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1, cv2.LINE_AA)
                 cv2.putText(image, feedback, (410, 60), 
                             cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2, cv2.LINE_AA)
