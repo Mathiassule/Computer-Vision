@@ -9,10 +9,10 @@ import pandas as pd
 from datetime import datetime
 
 # --- PAGE CONFIG ---
-st.set_page_config(page_title="FaceID Attendance", page_icon="👤", layout="wide")
+st.set_page_config(page_title="FaceID Gatekeeper", page_icon="🛡️", layout="wide")
 
-st.title("👤 FaceID: Smart Attendance System")
-st.markdown("**Week 9, Day 4: Automated Logging**")
+st.title("🛡️ FaceID: The Gatekeeper")
+st.markdown("**Week 9, Day 5: Biometric Security Dashboard**")
 
 # --- FILES MANAGEMENT ---
 DB_FILE = "face_db.pkl"
@@ -31,45 +31,46 @@ def save_db(database):
 if 'face_db' not in st.session_state:
     st.session_state['face_db'] = load_db()
 
-# --- ATTENDANCE LOGIC ---
+# --- SIDEBAR: CONTROL PANEL ---
+st.sidebar.header("⚙️ Security Settings")
+# Threshold: Lower = Stricter (Vectors must be closer to match)
+security_threshold = st.sidebar.slider("Security Threshold", 5, 25, 12, help="Lower values make the system stricter. Higher values accept more variation.")
+
+st.sidebar.divider()
+st.sidebar.subheader("📡 Live Activity Feed")
+if os.path.exists(LOG_FILE):
+    df_feed = pd.read_csv(LOG_FILE)
+    # Show last 5 entries, newest on top, only Name and Time
+    st.sidebar.dataframe(df_feed.tail(5).iloc[::-1][['Name', 'Time']], hide_index=True, use_container_width=True)
+else:
+    st.sidebar.info("No activity yet.")
+
+# --- CORE FUNCTIONS ---
 def mark_attendance(name):
-    """
-    Logs the person's entry into a CSV file.
-    Prevents duplicate entries for the same day.
-    """
     now = datetime.now()
     date_str = now.strftime("%Y-%m-%d")
     time_str = now.strftime("%H:%M:%S")
     
-    # Create file if it doesn't exist
     if not os.path.exists(LOG_FILE):
         df = pd.DataFrame(columns=["Name", "Date", "Time", "Status"])
         df.to_csv(LOG_FILE, index=False)
     
-    # Load current log
     df = pd.read_csv(LOG_FILE)
-    
-    # Check if already logged TODAY
-    # Filter: Name matches AND Date matches
     already_present = df[(df['Name'] == name) & (df['Date'] == date_str)]
     
     if already_present.empty:
-        # Add new entry
         new_entry = pd.DataFrame({
             "Name": [name], 
             "Date": [date_str], 
             "Time": [time_str],
-            "Status": ["Present"]
+            "Status": ["Authorized"]
         })
-        # concat instead of append (pandas 2.0 best practice)
         df = pd.concat([df, new_entry], ignore_index=True)
         df.to_csv(LOG_FILE, index=False)
         return True, time_str
     else:
-        # Return False (not new) and the original check-in time
         return False, already_present.iloc[0]['Time']
 
-# --- CORE LOGIC: EMBEDDING ---
 def get_embedding(image):
     img_array = np.array(image)
     img_bgr = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
@@ -87,8 +88,7 @@ def get_embedding(image):
         st.error(f"Error: {e}")
         return None, None
 
-# --- CORE LOGIC: MATCHING ---
-def find_match(target_embedding, db, threshold=10):
+def find_match(target_embedding, db, threshold):
     min_dist = float("inf")
     identity = "Unknown"
     
@@ -100,97 +100,118 @@ def find_match(target_embedding, db, threshold=10):
                 identity = name
     return identity, min_dist
 
-# --- MAIN UI TABS ---
-tab1, tab2, tab3, tab4 = st.tabs(["🔍 Biometric Scanner", "➕ Register Face", "🗂️ Database", "📝 Attendance Log"])
+# --- TABS ---
+tab1, tab2, tab3, tab4 = st.tabs(["🚪 Gate Control", "👤 Employee Database", "➕ New Registration", "📜 Full Logs"])
 
-# --- TAB 1: SCANNER ---
+# --- TAB 1: GATE CONTROL (Main Dashboard) ---
 with tab1:
-    st.header("Gate Entry")
-    scan_file = st.file_uploader("CCTV Snapshot", type=['jpg', 'png', 'jpeg'], key="scanner")
+    col_cam, col_status = st.columns([1.5, 1])
     
-    if scan_file:
-        image = Image.open(scan_file).convert('RGB')
-        col1, col2 = st.columns(2)
-        with col1:
-            st.image(image, caption="Live Feed", use_container_width=True)
+    with col_cam:
+        st.subheader("CCTV Feed")
+        scan_file = st.file_uploader("Upload Snapshot", type=['jpg', 'png', 'jpeg'], label_visibility="collapsed")
+        
+        if scan_file:
+            image = Image.open(scan_file).convert('RGB')
+            st.image(image, caption="Live Input", use_container_width=True)
             
-        if st.button("Verify Access", type="primary"):
-            with st.spinner("Processing Biometrics..."):
-                results, img_array = get_embedding(image)
-                
-                if results:
-                    annotated_img = img_array.copy()
+            # --- PROCESS BUTTON ---
+            if st.button("VERIFY IDENTITY", type="primary", use_container_width=True):
+                with st.spinner("Analyzing Biometrics..."):
+                    results, img_array = get_embedding(image)
                     
-                    for face in results:
-                        identity, dist = find_match(face['embedding'], st.session_state['face_db'])
-                        area = face['facial_area']
-                        x, y, w, h = area['x'], area['y'], area['w'], area['h']
+                    if results:
+                        annotated_img = img_array.copy()
                         
-                        if identity == "Unknown":
-                            color = (255, 0, 0)
-                            label = f"Unknown ({dist:.2f})"
-                        else:
-                            color = (0, 255, 0)
-                            label = f"{identity}"
+                        for face in results:
+                            # Use dynamic threshold from sidebar
+                            identity, dist = find_match(face['embedding'], st.session_state['face_db'], security_threshold)
+                            area = face['facial_area']
+                            x, y, w, h = area['x'], area['y'], area['w'], area['h']
                             
-                            # --- DAY 4 LOGIC: LOG ATTENDANCE ---
-                            is_new, log_time = mark_attendance(identity)
-                            if is_new:
-                                st.toast(f"✅ Entry logged for {identity} at {log_time}")
+                            if identity == "Unknown":
+                                color = (255, 0, 0)
+                                status_text = "DENIED"
+                                # Visuals for Unknown
+                                cv2.rectangle(annotated_img, (x, y), (x+w, y+h), color, 3)
+                                
+                                with col_status:
+                                    st.error("ACCESS DENIED")
+                                    st.metric(label="Identity", value="Unknown Person")
+                                    st.metric(label="Distance Score", value=f"{dist:.2f}", delta="-High Risk")
+                                    st.write("⚠️ **Security Alert:** Intruder detected.")
+
                             else:
-                                st.toast(f"ℹ️ {identity} already checked in at {log_time}")
+                                color = (0, 255, 0)
+                                status_text = "GRANTED"
+                                # Log Logic
+                                is_new, log_time = mark_attendance(identity)
+                                
+                                # Visuals for Known
+                                cv2.rectangle(annotated_img, (x, y), (x+w, y+h), color, 3)
+                                
+                                with col_status:
+                                    st.success("ACCESS GRANTED")
+                                    st.metric(label="Identity", value=identity)
+                                    st.metric(label="Match Confidence", value=f"{dist:.2f}", delta="Low Distance (Good)")
+                                    if is_new:
+                                        st.toast(f"Welcome {identity}!")
+                                    else:
+                                        st.info(f"Already logged at {log_time}")
 
-                        cv2.rectangle(annotated_img, (x, y), (x+w, y+h), color, 3)
-                        cv2.putText(annotated_img, label, (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, color, 2)
-                    
-                    with col2:
-                        st.image(annotated_img, caption="Access Result", use_container_width=True)
-                else:
-                    st.warning("No face detected.")
+                        # Update the image with boxes
+                        st.image(annotated_img, caption="Analysis Overlay", use_container_width=True)
+                    else:
+                        st.warning("No face detected in the image.")
 
-# --- TAB 2: REGISTER ---
+# --- TAB 2: DATABASE ---
 with tab2:
-    st.header("Register Employee")
-    reg_name = st.text_input("Full Name", placeholder="e.g. Tony Stark")
-    reg_file = st.file_uploader("Reference Photo", type=['jpg', 'png', 'jpeg'], key="register")
+    st.subheader("Registered Personnel")
+    if st.session_state['face_db']:
+        # Show stats
+        st.metric("Total Employees", len(st.session_state['face_db']))
+        # Show list
+        st.json(list(st.session_state['face_db'].keys()))
+        
+        if st.button("Clear Database (Reset)"):
+            st.session_state['face_db'] = {}
+            save_db({})
+            st.rerun()
+    else:
+        st.info("Database is empty.")
 
-    if reg_file and reg_name:
-        image = Image.open(reg_file).convert('RGB')
-        st.image(image, width=200)
-        if st.button("Save to Database"):
+# --- TAB 3: REGISTRATION ---
+with tab3:
+    st.subheader("Onboard New User")
+    with st.form("reg_form"):
+        col_reg1, col_reg2 = st.columns(2)
+        with col_reg1:
+            reg_name = st.text_input("Full Name")
+            reg_file = st.file_uploader("Profile Photo", type=['jpg', 'png', 'jpeg'])
+        with col_reg2:
+            if reg_file:
+                st.image(reg_file, width=200)
+        
+        submit = st.form_submit_button("Save to System")
+        
+        if submit and reg_file and reg_name:
+            reg_image = Image.open(reg_file).convert('RGB')
             with st.spinner("Encoding..."):
-                results, _ = get_embedding(image)
+                results, _ = get_embedding(reg_image)
                 if results:
                     st.session_state['face_db'][reg_name] = results[0]['embedding']
                     save_db(st.session_state['face_db'])
-                    st.success(f"✅ Registered {reg_name}")
+                    st.success(f"✅ User '{reg_name}' registered successfully.")
                 else:
-                    st.error("Face not clear enough.")
-
-# --- TAB 3: DATABASE ---
-with tab3:
-    st.header("System Database")
-    if st.session_state['face_db']:
-        st.json(list(st.session_state['face_db'].keys()))
-    else:
-        st.info("No registered users.")
+                    st.error("Face could not be processed. Use a clearer photo.")
 
 # --- TAB 4: LOGS ---
 with tab4:
-    st.header("Daily Attendance Report")
-    
+    st.subheader("Security Access Log")
     if os.path.exists(LOG_FILE):
         df = pd.read_csv(LOG_FILE)
-        # Show newest first
         st.dataframe(df.iloc[::-1], use_container_width=True)
-        
-        col_down, col_clear = st.columns(2)
-        with col_down:
-            csv = df.to_csv(index=False).encode('utf-8')
-            st.download_button("📥 Download Report (CSV)", csv, "attendance_report.csv", "text/csv")
-        with col_clear:
-            if st.button("🗑️ Reset Logs"):
-                os.remove(LOG_FILE)
-                st.rerun()
+        csv = df.to_csv(index=False).encode('utf-8')
+        st.download_button("📥 Download Audit Log", csv, "access_log.csv", "text/csv")
     else:
-        st.info("No attendance records found yet.")
+        st.info("No logs generated yet.")
