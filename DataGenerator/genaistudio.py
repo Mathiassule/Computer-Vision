@@ -8,14 +8,30 @@ import json
 st.set_page_config(page_title="AI Image Generator", page_icon="🎨", layout="wide")
 
 st.title("🎨 AI Synthetic Data Generator")
-st.markdown("**Week 11, Day 1: Text-to-Image Pipeline**")
+st.markdown("**Week 11, Day 2: Prompt Engineering**")
 
 # --- SIDEBAR: API SETUP ---
 st.sidebar.header("⚙️ Configuration")
 api_key = st.sidebar.text_input("Hugging Face API Token", type="password", help="Get free token from huggingface.co/settings/tokens")
 
+# --- SIDEBAR: ADVANCED SETTINGS (Day 2 Features) ---
+st.sidebar.divider()
+st.sidebar.subheader("🎛️ Model Parameters")
+
+# 1. Negative Prompt: Tells the AI what to avoid
+negative_prompt = st.sidebar.text_area(
+    "Negative Prompt (What to avoid):", 
+    value="blurry, low quality, distorted, ugly, bad anatomy, watermark, text", 
+    height=100
+)
+
+# 2. Guidance Scale: Controls adherence to the prompt
+# Low (1-5): Creative, loose interpretation
+# High (7-15): Strict adherence to your words
+guidance_scale = st.sidebar.slider("Guidance Scale", 1.0, 20.0, 7.5, help="Higher = stricter adherence to prompt. Lower = more creative.")
+
 # --- CONSTANTS ---
-# Updated API URL as per the error message recommendation
+# Using the stable router endpoint
 API_URL = "https://router.huggingface.co/hf-inference/models/stabilityai/stable-diffusion-xl-base-1.0"
 
 # --- CORE LOGIC ---
@@ -37,7 +53,7 @@ def query_model(payload, headers):
 col1, col2 = st.columns([1, 2])
 
 with col1:
-    st.subheader("Prompt Engineering")
+    st.subheader("Prompting")
     prompt = st.text_area("Describe the image:", height=150, placeholder="A futuristic construction worker wearing a neon safety vest, cyberpunk city background, 8k resolution, photorealistic")
     
     generate_btn = st.button("Generate Image", type="primary", use_container_width=True)
@@ -53,10 +69,19 @@ with col2:
         else:
             headers = {"Authorization": f"Bearer {api_key}"}
             
+            # Construct Payload with Day 2 Advanced Parameters
+            payload = {
+                "inputs": prompt,
+                "parameters": {
+                    "negative_prompt": negative_prompt,
+                    "guidance_scale": guidance_scale
+                }
+            }
+            
             with st.spinner("Dreaming... (This takes 5-10 seconds)"):
                 try:
                     # 1. Send Request
-                    image_bytes = query_model({"inputs": prompt}, headers)
+                    image_bytes = query_model(payload, headers)
                     
                     # 2. Decode Image
                     image = Image.open(io.BytesIO(image_bytes))
@@ -83,5 +108,7 @@ with col2:
                         st.info("💡 Hint: Error 503 usually means the model is 'Cold' and loading on the server. Wait 30 seconds and click Generate again.")
                     elif "401" in str(e):
                         st.info("💡 Hint: Error 401 means your API Token is invalid.")
+                    elif "403" in str(e):
+                        st.info("💡 Hint: Error 403 means permission denied. If using a Fine-Grained Token, ensure 'Make calls to the serverless Inference API' is checked. If using a Read token, try creating a new one.")
                     elif "410" in str(e):
                          st.info("💡 Hint: Error 410 usually means the API endpoint URL has changed.")
